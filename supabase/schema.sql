@@ -143,10 +143,11 @@ CREATE POLICY "Users can manage own qr_codes" ON qr_codes FOR ALL USING (
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own feedback" ON feedback;
 DROP POLICY IF EXISTS "Public can insert feedback" ON feedback;
+-- Only authenticated business owners can access feedback via RLS.
+-- Public submissions are handled exclusively through /api/feedback via service role.
 CREATE POLICY "Users can manage own feedback" ON feedback FOR ALL USING (
   EXISTS (SELECT 1 FROM businesses WHERE id = feedback.business_id AND owner_id = auth.uid())
 );
-CREATE POLICY "Public can insert feedback" ON feedback FOR INSERT WITH CHECK (true);
 
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can read own subscription" ON subscriptions;
@@ -155,10 +156,11 @@ CREATE POLICY "Users can read own subscription" ON subscriptions FOR SELECT USIN
 ALTER TABLE analytics_events ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can read own analytics" ON analytics_events;
 DROP POLICY IF EXISTS "Public can insert analytics" ON analytics_events;
+-- Only authenticated business owners can access analytics via RLS.
+-- Public scan/click events are handled exclusively through /api/analytics via service role.
 CREATE POLICY "Users can read own analytics" ON analytics_events FOR SELECT USING (
   EXISTS (SELECT 1 FROM businesses WHERE id = analytics_events.business_id AND owner_id = auth.uid())
 );
-CREATE POLICY "Public can insert analytics" ON analytics_events FOR INSERT WITH CHECK (true);
 
 ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 -- webhook_events only touched by service role (backend)

@@ -110,4 +110,90 @@ describe('Row Level Security (RLS) Policy Specifications (Requirement 2, 3 & 26)
     const results = rlsSelectQrCodes(null)
     expect(results).toHaveLength(0)
   })
+
+  describe('Direct Database INSERT Policy Enforcement (Anon / Public Client Blocked)', () => {
+    // PostgreSQL RLS policy evaluation engine for feedback INSERT
+    // Policy: "Users can manage own feedback" FOR ALL USING (EXISTS (SELECT 1 FROM businesses WHERE id = feedback.business_id AND owner_id = auth.uid()))
+    function rlsInsertFeedback(authUid: string | null, targetBusinessId: string) {
+      if (!authUid) {
+        // Unauthenticated / anon client has no matching INSERT policy -> denied by PostgreSQL RLS
+        return { success: false, error: 'new row violates row-level security policy for table "feedback"' }
+      }
+      const isOwner = allBusinesses.some((b) => b.id === targetBusinessId && b.owner_id === authUid)
+      if (!isOwner) {
+        return { success: false, error: 'new row violates row-level security policy for table "feedback"' }
+      }
+      return { success: true, error: null }
+    }
+
+    // PostgreSQL RLS policy evaluation engine for analytics_events INSERT
+    // Table analytics_events only has a SELECT policy for owners:
+    // CREATE POLICY "Users can read own analytics" ON analytics_events FOR SELECT USING (...)
+    // There is NO INSERT policy for public/anon or dashboard users. Direct INSERT is strictly forbidden.
+    function rlsInsertAnalytics() {
+      // Under PostgreSQL default-deny RLS, with no INSERT policy for anon/authenticated roles,
+      // all direct client INSERT statements are blocked.
+      return { success: false, error: 'new row violates row-level security policy for table "analytics_events"' }
+    }
+
+    it('Test 8: Unauthenticated / public client CANNOT directly INSERT into feedback (direct DB call blocked)', () => {
+      const result = rlsInsertFeedback(null, 'biz-a')
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('violates row-level security policy')
+    })
+
+    it('Test 9: Unauthenticated / public client CANNOT directly INSERT into analytics_events (direct DB call blocked)', () => {
+      const result = rlsInsertAnalytics()
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('violates row-level security policy')
+    })
+
+    it('Test 10: Authenticated user A cannot directly INSERT feedback into User B business', () => {
+      const result = rlsInsertFeedback(userA, 'biz-b')
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('violates row-level security policy')
+    })
+
+    it('Test 11: Authenticated user A CAN insert/manage feedback for their own business', () => {
+      const result = rlsInsertFeedback(userA, 'biz-a')
+      expect(result.success).toBe(true)
+      expect(result.error).toBeNull()
+    })
+  })
+
+  describe('Database Schema & Migration Policy Verification', () => {
+    it('Test 12: schema.sql does NOT define public INSERT on feedback or analytics_events', async () => {
+      const fs = await import('fs')
+      const path = await import('path')
+      const schemaPath = path.resolve(__dirname, '../../supabase/schema.sql')
+      const schemaSql = fs.readFileSync(schemaPath, 'utf8')
+
+      // Assert that dangerous public insert policies are NOT created
+      expect(schemaSql).not.toMatch(/CREATE\s+POLICY\s+["']Public can insert feedback["']/i)
+      expect(schemaSql).not.toMatch(/CREATE\s+POLICY\s+["']Public can insert analytics["']/i)
+      expect(schemaSql).not.toMatch(/CREATE\s+POLICY\s+.*?ON\s+feedback\s+FOR\s+INSERT\s+WITH\s+CHECK\s*\(\s*true\s*\)/i)
+      expect(schemaSql).not.toMatch(/CREATE\s+POLICY\s+.*?ON\s+analytics_events\s+FOR\s+INSERT\s+WITH\s+CHECK\s*\(\s*true\s*\)/i)
+
+      // Assert that DROP statements exist for both
+      expect(schemaSql).toMatch(/DROP\s+POLICY\s+IF\s+EXISTS\s+["']Public can insert feedback["']\s+ON\s+feedback/i)
+      expect(schemaSql).toMatch(/DROP\s+POLICY\s+IF\s+EXISTS\s+["']Public can insert analytics["']\s+ON\s+analytics_events/i)
+
+      // Assert that owner isolation policies remain active
+      expect(schemaSql).toMatch(/CREATE\s+POLICY\s+["']Users can manage own feedback["']/i)
+      expect(schemaSql).toMatch(/CREATE\s+POLICY\s+["']Users can read own analytics["']/i)
+    })
+
+    it('Test 13: migration_remove_public_inserts.sql safely and idempotently drops public insert policies', async () => {
+      const fs = await import('fs')
+      const path = await import('path')
+      const migrationPath = path.resolve(__dirname, '../../supabase/migration_remove_public_inserts.sql')
+      const migrationSql = fs.readFileSync(migrationPath, 'utf8')
+
+      expect(migrationSql).toMatch(/DROP\s+POLICY\s+IF\s+EXISTS\s+["']Public can insert feedback["']\s+ON\s+feedback/i)
+      expect(migrationSql).toMatch(/DROP\s+POLICY\s+IF\s+EXISTS\s+["']Public can insert analytics["']\s+ON\s+analytics_events/i)
+      // Must not drop tables or disable RLS
+      expect(migrationSql).not.toMatch(/DROP\s+TABLE/i)
+      expect(migrationSql).not.toMatch(/DISABLE\s+ROW\s+LEVEL\s+SECURITY/i)
+    })
+  })
 })

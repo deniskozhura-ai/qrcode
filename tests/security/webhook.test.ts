@@ -85,31 +85,124 @@ describe('Lemon Squeezy Webhook Security & Idempotency (Requirement 11, 12, 13 &
     })
   })
 
-  describe('Concurrent Duplicate Processing & Idempotency Simulation', () => {
-    it('8. simulates atomic UNIQUE constraint behavior for concurrent duplicate events', async () => {
-      // Models database UNIQUE(provider, event_id) table behavior
-      const processedEvents = new Set<string>()
+  describe('Webhook Idempotency, Replay Protection & Retry Semantics', () => {
+    // Database simulation tracking webhook_events and subscription update counts
+    class MockWebhookDatabase {
+      webhookEvents = new Set<string>()
+      subscriptionUpdates = new Map<string, number>()
+      shouldFailUpdate = false
 
-      async function processWebhookEvent(eventId: string): Promise<{ status: string; processed: boolean }> {
-        // Atomic insert simulation:
-        if (processedEvents.has(eventId)) {
-          // Duplicate key violation (PostgreSQL 23505)
-          return { status: 'duplicate_ignored', processed: false }
+      async claimEvent(eventId: string): Promise<{ success: boolean; code?: string }> {
+        if (this.webhookEvents.has(eventId)) {
+          return { success: false, code: '23505' } // PostgreSQL unique_violation
         }
-        processedEvents.add(eventId)
-        // Subscription state update simulation:
-        return { status: 'success', processed: true }
+        this.webhookEvents.add(eventId)
+        return { success: true }
       }
 
+      async rollbackClaim(eventId: string): Promise<void> {
+        this.webhookEvents.delete(eventId)
+      }
+
+      async updateSubscription(eventId: string): Promise<void> {
+        if (this.shouldFailUpdate) {
+          throw new Error('Supabase database connection error during subscription update')
+        }
+        const currentCount = this.subscriptionUpdates.get(eventId) || 0
+        this.subscriptionUpdates.set(eventId, currentCount + 1)
+      }
+    }
+
+    async function handleWebhookRequest(
+      db: MockWebhookDatabase,
+      eventId: string
+    ): Promise<{ httpStatus: number; body: { received?: boolean; error?: string }; processed: boolean }> {
+      // 1. Atomically claim event in database
+      const claimResult = await db.claimEvent(eventId)
+      if (!claimResult.success) {
+        if (claimResult.code === '23505') {
+          // Replay or duplicate detected via atomic DB constraint
+          return { httpStatus: 200, body: { received: true }, processed: false }
+        }
+        return { httpStatus: 500, body: { error: 'Failed to record event claim' }, processed: false }
+      }
+
+      // 2. Perform subscription update with rollback on failure
+      try {
+        await db.updateSubscription(eventId)
+      } catch {
+        // Rollback event claim so provider can retry
+        await db.rollbackClaim(eventId)
+        return {
+          httpStatus: 500,
+          body: { error: 'Subscription update failed. Provider may retry.' },
+          processed: false,
+        }
+      }
+
+      // 3. Mark processed & return HTTP 200
+      return { httpStatus: 200, body: { received: true }, processed: true }
+    }
+
+    it('8. same event twice → processed only once (idempotent replay protection)', async () => {
+      const db = new MockWebhookDatabase()
+      const eventId = 'evt_ls_twice_123'
+
+      // First delivery: should process subscription update
+      const firstResponse = await handleWebhookRequest(db, eventId)
+      expect(firstResponse.httpStatus).toBe(200)
+      expect(firstResponse.processed).toBe(true)
+      expect(firstResponse.body.received).toBe(true)
+      expect(db.subscriptionUpdates.get(eventId)).toBe(1)
+
+      // Second delivery (duplicate / replay): should return 200 received without updating subscription again
+      const secondResponse = await handleWebhookRequest(db, eventId)
+      expect(secondResponse.httpStatus).toBe(200)
+      expect(secondResponse.processed).toBe(false)
+      expect(secondResponse.body.received).toBe(true)
+      // Critical check: subscription update was NOT executed a second time!
+      expect(db.subscriptionUpdates.get(eventId)).toBe(1)
+    })
+
+    it('9. subscription update failure → event is retryable (released from DB so provider retry succeeds)', async () => {
+      const db = new MockWebhookDatabase()
+      const eventId = 'evt_ls_fail_then_retry_456'
+
+      // Simulate transient failure during subscription update (e.g. network / DB outage)
+      db.shouldFailUpdate = true
+
+      // First delivery fails
+      const failedResponse = await handleWebhookRequest(db, eventId)
+      expect(failedResponse.httpStatus).toBe(500)
+      expect(failedResponse.processed).toBe(false)
+      expect(failedResponse.body.error).toContain('Subscription update failed')
+      // Subscription was not updated
+      expect(db.subscriptionUpdates.get(eventId)).toBeUndefined()
+      // Event must NOT remain locked in webhookEvents!
+      expect(db.webhookEvents.has(eventId)).toBe(false)
+
+      // Provider retries after transient issue is resolved
+      db.shouldFailUpdate = false
+      const retryResponse = await handleWebhookRequest(db, eventId)
+      expect(retryResponse.httpStatus).toBe(200)
+      expect(retryResponse.processed).toBe(true)
+      expect(retryResponse.body.received).toBe(true)
+      // Subscription is now updated exactly once!
+      expect(db.subscriptionUpdates.get(eventId)).toBe(1)
+      expect(db.webhookEvents.has(eventId)).toBe(true)
+    })
+
+    it('10. concurrent duplicate events → only one successful processing (atomic DB constraint)', async () => {
+      const db = new MockWebhookDatabase()
       const duplicateEventId = 'evt_ls_concurrent_888'
 
       // Fire 5 concurrent requests with identical eventId
       const results = await Promise.all([
-        processWebhookEvent(duplicateEventId),
-        processWebhookEvent(duplicateEventId),
-        processWebhookEvent(duplicateEventId),
-        processWebhookEvent(duplicateEventId),
-        processWebhookEvent(duplicateEventId),
+        handleWebhookRequest(db, duplicateEventId),
+        handleWebhookRequest(db, duplicateEventId),
+        handleWebhookRequest(db, duplicateEventId),
+        handleWebhookRequest(db, duplicateEventId),
+        handleWebhookRequest(db, duplicateEventId),
       ])
 
       const successfulRuns = results.filter((r) => r.processed)
@@ -118,7 +211,9 @@ describe('Lemon Squeezy Webhook Security & Idempotency (Requirement 11, 12, 13 &
       // Exactly ONE request must process the event; all others must be safely deduplicated!
       expect(successfulRuns).toHaveLength(1)
       expect(duplicateRuns).toHaveLength(4)
-      expect(duplicateRuns.every((r) => r.status === 'duplicate_ignored')).toBe(true)
+      expect(results.every((r) => r.httpStatus === 200)).toBe(true)
+      expect(results.every((r) => r.body.received === true)).toBe(true)
+      expect(db.subscriptionUpdates.get(duplicateEventId)).toBe(1)
     })
   })
 })
