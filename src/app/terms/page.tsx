@@ -34,13 +34,13 @@ export default function TermsPage() {
             <ul className="list-disc pl-5 space-y-1">
               <li>You may not use ReviewFlow to generate fake reviews.</li>
               <li>You may not use ReviewFlow for spam or harassment.</li>
-              <li>You may not abuse the platform to circumvent Google's review policies.</li>
+              <li>You may not abuse the platform to circumvent Google&apos;s review policies.</li>
             </ul>
           </section>
 
           <section>
             <h2 className="text-xl font-bold text-zinc-900 mb-3">5. Limitations</h2>
-            <p>ReviewFlow is provided "as is". We are not responsible for the content of customer feedback submitted through the platform.</p>
+            <p>ReviewFlow is provided &ldquo;as is&rdquo;. We are not responsible for the content of customer feedback submitted through the platform.</p>
           </section>
 
           <section>

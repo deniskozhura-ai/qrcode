@@ -1,29 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { FeedbackInputSchema } from '@/lib/validations'
+import { feedbackRateLimiter } from '@/lib/rateLimit'
+import { getClientIp } from '@/lib/requestIp'
 
-// Rate limiting using a simple in-memory store (upgrade to Redis in production)
-const rateLimit = new Map<string, { count: number; resetAt: number }>()
-
-function getClientIp(req: Request): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown'
-}
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now()
-  const windowMs = 60_000 // 1 minute
-  const maxRequests = 5
-
-  const record = rateLimit.get(ip)
-  if (!record || now > record.resetAt) {
-    rateLimit.set(ip, { count: 1, resetAt: now + windowMs })
-    return true
-  }
-  if (record.count >= maxRequests) return false
-  record.count++
-  return true
-}
-
-// Service client (bypasses RLS for anonymous inserts)
 function getServiceClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,66 +13,89 @@ function getServiceClient() {
 }
 
 export async function POST(req: Request) {
+  // 1. Rate Limiting (5 requests / min per IP)
   const ip = getClientIp(req)
-
-  if (!checkRateLimit(ip)) {
-    return NextResponse.json({ error: 'Too many requests. Please wait a moment.' }, { status: 429 })
+  const rateLimitResult = feedbackRateLimiter.check(ip)
+  if (!rateLimitResult.success) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please wait a moment.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)),
+        },
+      }
+    )
   }
 
-  let body: {
-    business_id?: string
-    qr_code_id?: string
-    rating?: number
-    category?: string | null
-    message?: string | null
-  }
-
+  // 2. Parse & Validate Payload
+  let rawBody: unknown
   try {
-    body = await req.json()
+    rawBody = await req.json()
   } catch {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 })
   }
 
-  const { business_id, qr_code_id, rating, category, message } = body
+  const parsed = FeedbackInputSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.errors[0]?.message || 'Invalid feedback data' },
+      { status: 400 }
+    )
+  }
 
-  // Validate
-  if (!business_id || typeof business_id !== 'string') {
-    return NextResponse.json({ error: 'Missing business_id' }, { status: 400 })
-  }
-  if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
-    return NextResponse.json({ error: 'Invalid rating' }, { status: 400 })
-  }
-  if (message && typeof message === 'string' && message.length > 1000) {
-    return NextResponse.json({ error: 'Message too long' }, { status: 400 })
-  }
+  const { qr_code_id, rating, category, message, business_id: clientBusinessId } = parsed.data
 
   const db = getServiceClient()
 
-  // Verify business exists and is active
-  const { data: business } = await db
+  // 3. Resolve & Verify QR Code and Business (Defense against BOLA / Forged IDs)
+  const { data: qrCode, error: qrError } = await db
+    .from('qr_codes')
+    .select('id, business_id, active')
+    .eq('id', qr_code_id)
+    .maybeSingle()
+
+  if (qrError || !qrCode || !qrCode.active) {
+    return NextResponse.json({ error: 'QR code not found or inactive' }, { status: 400 })
+  }
+
+  // Cross-business ownership check: client must not forge business_id
+  if (clientBusinessId && clientBusinessId !== qrCode.business_id) {
+    return NextResponse.json(
+      { error: 'BOLA detected: Provided business_id does not match the QR code owner' },
+      { status: 400 }
+    )
+  }
+
+  // Verify business is active
+  const { data: business, error: bizError } = await db
     .from('businesses')
     .select('id, status')
-    .eq('id', business_id)
-    .single()
+    .eq('id', qrCode.business_id)
+    .maybeSingle()
 
-  if (!business || business.status !== 'active') {
+  if (bizError || !business || business.status !== 'active') {
     return NextResponse.json({ error: 'Business not found or inactive' }, { status: 404 })
   }
 
-  // Insert feedback
-  const { error } = await db.from('feedback').insert({
-    business_id,
-    qr_code_id: qr_code_id ?? null,
-    rating,
-    category: category ?? null,
-    message: message ? message.trim().slice(0, 1000) : null,
-    status: 'new',
-  })
+  // 4. Insert Verified Feedback using server-derived business_id and qr_code_id
+  const { data: inserted, error: insertError } = await db
+    .from('feedback')
+    .insert({
+      business_id: business.id,
+      qr_code_id: qrCode.id,
+      rating,
+      category: category ? category.trim() : null,
+      message: message ? message.trim() : null,
+      status: 'new',
+    })
+    .select('id')
+    .single()
 
-  if (error) {
-    console.error('[feedback API] Insert error:', error)
+  if (insertError) {
+    console.error('[feedback API] Insert error:', insertError)
     return NextResponse.json({ error: 'Failed to save feedback' }, { status: 500 })
   }
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, id: inserted?.id })
 }

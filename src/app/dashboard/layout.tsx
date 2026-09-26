@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { logout } from '@/app/actions/auth'
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
 
 const navItems = [
   { href: '/dashboard', label: 'Overview', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -31,15 +33,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .order('created_at')
 
   const currentBusiness = businesses?.[0]
+  const sub = await getUserSubscription()
+  const hasSubscription = isSubscriptionActive(sub)
 
   return (
     <div className="flex h-screen bg-zinc-50 font-sans antialiased">
       {/* Sidebar */}
       <aside className="w-60 bg-white border-r border-zinc-200 flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-zinc-100">
+        <div className="px-5 py-5 border-b border-zinc-100 flex items-center justify-between">
           <Link href="/dashboard" className="flex items-center gap-2">
             <span className="w-8 h-8 bg-zinc-900 rounded-lg flex items-center justify-center text-white text-xs font-bold">RF</span>
             <span className="text-sm font-semibold text-zinc-900">ReviewFlow</span>
+          </Link>
+          <Link href="/dashboard/billing">
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+              hasSubscription ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {hasSubscription ? (sub?.status === 'trialing' ? 'Trial' : 'Pro') : 'Inactive'}
+            </span>
           </Link>
         </div>
 

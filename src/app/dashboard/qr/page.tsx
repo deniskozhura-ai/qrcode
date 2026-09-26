@@ -2,10 +2,18 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import QrManagement from './QrManagement'
 
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
+
 export default async function QrPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  const sub = await getUserSubscription()
+  if (!isSubscriptionActive(sub)) {
+    redirect('/dashboard/billing?notice=subscription_required')
+  }
 
   const { data: businesses } = await supabase
     .from('businesses')

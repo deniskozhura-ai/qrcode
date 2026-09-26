@@ -2,21 +2,8 @@
 
 import { useState } from 'react'
 import { format } from 'date-fns'
-import type { Subscription, SubscriptionStatus } from '@/types'
-
-// Inlined here to avoid server-only import chains
-function isSubscriptionActive(sub: Subscription | null): boolean {
-  if (!sub) return false
-  const activeStatuses: SubscriptionStatus[] = ['trialing', 'active', 'past_due']
-  if (!activeStatuses.includes(sub.status)) return false
-  if (sub.status === 'cancelled' && sub.current_period_end) {
-    return new Date(sub.current_period_end) > new Date()
-  }
-  if (sub.status === 'trialing' && sub.trial_ends_at) {
-    return new Date(sub.trial_ends_at) > new Date()
-  }
-  return true
-}
+import type { Subscription } from '@/types'
+import { isSubscriptionActive } from '@/lib/billing/access'
 
 interface Props {
   subscription: Subscription | null

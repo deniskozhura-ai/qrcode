@@ -3,15 +3,22 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import crypto from 'crypto'
+import { z } from 'zod'
+import { BusinessInputSchema } from '@/lib/validations'
 
 function generateSlug(name: string): string {
   const base = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 30)
-  const suffix = Math.random().toString(36).slice(2, 7)
+    .slice(0, 30) || 'biz'
+  const suffix = crypto.randomBytes(3).toString('hex')
   return `${base}-${suffix}`
+}
+
+function generateQrSlug(): string {
+  return crypto.randomBytes(4).toString('hex')
 }
 
 export async function saveBusiness(formData: FormData) {
@@ -21,21 +28,50 @@ export async function saveBusiness(formData: FormData) {
   if (!user) throw new Error('Not authenticated')
 
   const id = (formData.get('id') as string) || null
-  const name = formData.get('name') as string
-  const google_review_url = (formData.get('google_review_url') as string) || null
-  const brand_color = (formData.get('brand_color') as string) || '#18181b'
-  const timezone = (formData.get('timezone') as string) || 'UTC'
-  const address = (formData.get('address') as string) || null
+
+  // 1. Validate Input
+  const rawData = {
+    name: formData.get('name') as string,
+    google_review_url: (formData.get('google_review_url') as string) || null,
+    brand_color: (formData.get('brand_color') as string) || '#18181b',
+    timezone: (formData.get('timezone') as string) || 'UTC',
+    address: (formData.get('address') as string) || null,
+  }
+
+  const parsed = BusinessInputSchema.safeParse(rawData)
+  if (!parsed.success) {
+    const errorMsg = parsed.error.errors[0]?.message || 'Invalid business data'
+    redirect(`/dashboard/settings/business?error=${encodeURIComponent(errorMsg)}`)
+  }
+
+  const { name, google_review_url, brand_color, timezone, address } = parsed.data
 
   if (id) {
+    // Validate UUID format of id
+    if (!z.string().uuid().safeParse(id).success) {
+      redirect('/dashboard/settings/business?error=Invalid+business+ID')
+    }
+
+    // Explicit ownership check
+    const { data: existingBiz } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('id', id)
+      .eq('owner_id', user.id)
+      .maybeSingle()
+
+    if (!existingBiz) {
+      redirect('/dashboard/settings/business?error=Business+not+found+or+unauthorized')
+    }
+
     // Update existing
-    const updateData: Record<string, any> = {
+    const updateData: Record<string, unknown> = {
       name,
-      google_review_url,
+      google_review_url: google_review_url || null,
       brand_color,
       timezone,
     }
-    if (address !== null) {
+    if (address !== null && address !== undefined) {
       updateData.address = address
     }
 
@@ -58,28 +94,29 @@ export async function saveBusiness(formData: FormData) {
 
     if (error) {
       console.error('[saveBusiness] update error:', error)
-      redirect('/dashboard/settings/business?error=update_failed')
+      redirect('/dashboard/settings/business?error=Failed+to+update+business')
     }
   } else {
-    // Insert new — generate unique slug
+    // Insert new — ensure slug uniqueness with retries
     let slug = generateSlug(name)
+    let attempts = 0
+    while (attempts < 5) {
+      const { data: existing } = await supabase
+        .from('businesses')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle()
 
-    // Ensure slug uniqueness
-    const { data: existing } = await supabase
-      .from('businesses')
-      .select('id')
-      .eq('slug', slug)
-      .maybeSingle()
-
-    if (existing) {
-      slug = generateSlug(name) // try again with different suffix
+      if (!existing) break
+      slug = generateSlug(name)
+      attempts++
     }
 
-    const insertData: Record<string, any> = {
+    const insertData: Record<string, unknown> = {
       owner_id: user.id,
       name,
       slug,
-      google_review_url,
+      google_review_url: google_review_url || null,
       brand_color,
       timezone,
     }
@@ -107,12 +144,12 @@ export async function saveBusiness(formData: FormData) {
 
     if (error) {
       console.error('[saveBusiness] insert error:', error)
-      redirect('/dashboard/settings/business?error=create_failed')
+      redirect('/dashboard/settings/business?error=Failed+to+create+business')
     }
 
     // Auto-create default QR code for the new business
     if (newBiz?.id) {
-      const qrSlug = Math.random().toString(36).slice(2, 10)
+      const qrSlug = generateQrSlug()
       await supabase.from('qr_codes').insert([{
         business_id: newBiz.id,
         name: 'Main / Counter',

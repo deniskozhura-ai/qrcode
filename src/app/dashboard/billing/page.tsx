@@ -11,7 +11,7 @@ export default async function BillingPage() {
     .from('subscriptions')
     .select('*')
     .eq('user_id', user.id)
-    .single()
+    .maybeSingle()
 
   return <BillingClient subscription={sub} />
 }

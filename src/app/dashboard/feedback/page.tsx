@@ -3,6 +3,9 @@ import { redirect } from 'next/navigation'
 import { format } from 'date-fns'
 import { markFeedbackResolved, deleteFeedback } from '@/app/actions/dashboardFeedback'
 
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
+
 export default async function FeedbackPage({
   searchParams,
 }: {
@@ -11,6 +14,11 @@ export default async function FeedbackPage({
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  const sub = await getUserSubscription()
+  if (!isSubscriptionActive(sub)) {
+    redirect('/dashboard/billing?notice=subscription_required')
+  }
 
   const { data: businesses } = await supabase.from('businesses').select('id').eq('owner_id', user.id).order('created_at', { ascending: false }).limit(1)
   const business = businesses?.[0]

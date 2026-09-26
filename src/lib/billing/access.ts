@@ -19,24 +19,42 @@ export function mapLsStatus(lsStatus: string): SubscriptionStatus {
 
 /**
  * Check if a subscription allows dashboard access
- * Pure function — safe to import in Client Components
+ * Pure function — safe to import in Client Components & Server
+ * 
+ * Rules:
+ * - null/undefined: false
+ * - active: true
+ * - past_due: true (grace period)
+ * - trialing: true if trial has not expired, false if expired
+ * - cancelled: true if current period has not ended yet, false if period expired
+ * - paused: false
+ * - expired: false
+ * - inactive: false
  */
-export function isSubscriptionActive(sub: Subscription | null): boolean {
-  if (!sub) return false
+export function isSubscriptionActive(sub: Subscription | null | undefined): boolean {
+  if (!sub || !sub.status) return false
 
-  const activeStatuses: SubscriptionStatus[] = ['trialing', 'active', 'past_due']
+  const now = new Date()
 
-  if (!activeStatuses.includes(sub.status)) return false
+  switch (sub.status) {
+    case 'active':
+      return true
 
-  // If cancelled, check if current period hasn't ended yet
-  if (sub.status === 'cancelled' && sub.current_period_end) {
-    return new Date(sub.current_period_end) > new Date()
+    case 'past_due':
+      return true
+
+    case 'trialing':
+      if (!sub.trial_ends_at) return true
+      return new Date(sub.trial_ends_at) > now
+
+    case 'cancelled':
+      if (!sub.current_period_end) return false
+      return new Date(sub.current_period_end) > now
+
+    case 'paused':
+    case 'expired':
+    case 'inactive':
+    default:
+      return false
   }
-
-  // If trialing, check trial end date
-  if (sub.status === 'trialing' && sub.trial_ends_at) {
-    return new Date(sub.trial_ends_at) > new Date()
-  }
-
-  return true
 }

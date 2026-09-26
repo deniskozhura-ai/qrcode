@@ -93,6 +93,10 @@ export default function FeedbackClient({ businessId, qrCodeId, brandColor, googl
 
   function handleGoogleClick() {
     if (!googleReviewUrl) return
+    if (!googleReviewUrl.startsWith('http://') && !googleReviewUrl.startsWith('https://')) {
+      console.warn('Rejected unsafe external review URL')
+      return
+    }
     // Track click
     fetch('/api/analytics', {
       method: 'POST',
@@ -162,9 +166,9 @@ export default function FeedbackClient({ businessId, qrCodeId, brandColor, googl
         </div>
 
         {isLow ? (
-          <p className="text-center text-zinc-600 font-medium">We're sorry your experience wasn't perfect.<br/><span className="text-sm text-zinc-400">What could we improve?</span></p>
+          <p className="text-center text-zinc-600 font-medium">We&apos;re sorry your experience wasn&apos;t perfect.<br/><span className="text-sm text-zinc-400">What could we improve?</span></p>
         ) : (
-          <p className="text-center text-zinc-600 font-medium">We'd love to know more! 😊<br/><span className="text-sm text-zinc-400">Tell us what made it great.</span></p>
+          <p className="text-center text-zinc-600 font-medium">We&apos;d love to know more! 😊<br/><span className="text-sm text-zinc-400">Tell us what made it great.</span></p>
         )}
 
         {/* Category */}
@@ -253,7 +257,7 @@ export default function FeedbackClient({ businessId, qrCodeId, brandColor, googl
         ) : (
           <>
             <h2 className="text-xl font-bold text-zinc-900">Thanks for your feedback!</h2>
-            <p className="text-zinc-500 text-sm max-w-xs">We're really glad you had a great experience.</p>
+            <p className="text-zinc-500 text-sm max-w-xs">We&apos;re really glad you had a great experience.</p>
           </>
         )}
       </div>
@@ -262,7 +266,7 @@ export default function FeedbackClient({ businessId, qrCodeId, brandColor, googl
       {message.trim() && (
         <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-100">
           <p className="text-xs font-medium text-zinc-400 mb-2">Your feedback:</p>
-          <p className="text-sm text-zinc-700 leading-relaxed">"{message.trim()}"</p>
+          <p className="text-sm text-zinc-700 leading-relaxed">&ldquo;{message.trim()}&rdquo;</p>
         </div>
       )}
 

@@ -2,6 +2,7 @@ import crypto from 'crypto'
 
 /**
  * Verify Lemon Squeezy webhook signature
+ * Uses timingSafeEqual and safely checks buffer length to avoid throwing
  * https://docs.lemonsqueezy.com/api/webhooks
  */
 export function verifyWebhookSignature(
@@ -9,12 +10,21 @@ export function verifyWebhookSignature(
   signature: string,
   secret: string
 ): boolean {
-  const hmac = crypto.createHmac('sha256', secret)
-  const digest = hmac.update(rawBody).digest('hex')
-  return crypto.timingSafeEqual(
-    Buffer.from(digest, 'hex'),
-    Buffer.from(signature, 'hex')
-  )
+  if (!signature || !secret || typeof signature !== 'string') return false
+  try {
+    const hmac = crypto.createHmac('sha256', secret)
+    const digest = hmac.update(rawBody).digest('hex')
+    const digestBuf = Buffer.from(digest, 'hex')
+    const sigBuf = Buffer.from(signature, 'hex')
+
+    if (digestBuf.length !== sigBuf.length) {
+      return false
+    }
+
+    return crypto.timingSafeEqual(digestBuf, sigBuf)
+  } catch {
+    return false
+  }
 }
 
 /**

@@ -8,6 +8,13 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS notify_weekly_summary BOOLEAN DEFA
 -- Add missing column to businesses
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS address TEXT;
 
+-- Add missing metadata column to analytics_events
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
+-- Security hardening: Remove overly broad public SELECT policies
+DROP POLICY IF EXISTS "Public can read active business" ON businesses;
+DROP POLICY IF EXISTS "Public can read qr_codes" ON qr_codes;
+
 -- Add missing columns to subscriptions (if table exists with old schema)
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS provider_product_id TEXT;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS provider_variant_id TEXT;

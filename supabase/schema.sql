@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS analytics_events (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   qr_code_id UUID REFERENCES qr_codes(id) ON DELETE SET NULL,
   event_type TEXT NOT NULL CHECK (event_type IN ('qr_scan', 'rating_submitted', 'feedback_submitted', 'feedback_copied', 'google_review_clicked')),
+  metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
@@ -125,19 +126,19 @@ DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can read own profile" ON profiles FOR SELECT USING (auth.uid() = id);
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
 
+-- Businesses: Strict owner isolation. Public database client cannot query businesses.
 ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own businesses" ON businesses;
 DROP POLICY IF EXISTS "Public can read active business" ON businesses;
 CREATE POLICY "Users can manage own businesses" ON businesses FOR ALL USING (auth.uid() = owner_id);
-CREATE POLICY "Public can read active business" ON businesses FOR SELECT USING (true);
 
+-- QR Codes: Strict owner isolation. Public database client cannot query QR codes.
 ALTER TABLE qr_codes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own qr_codes" ON qr_codes;
 DROP POLICY IF EXISTS "Public can read qr_codes" ON qr_codes;
 CREATE POLICY "Users can manage own qr_codes" ON qr_codes FOR ALL USING (
   EXISTS (SELECT 1 FROM businesses WHERE id = qr_codes.business_id AND owner_id = auth.uid())
 );
-CREATE POLICY "Public can read qr_codes" ON qr_codes FOR SELECT USING (true);
 
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own feedback" ON feedback;

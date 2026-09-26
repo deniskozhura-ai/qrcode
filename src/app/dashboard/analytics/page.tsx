@@ -1,10 +1,18 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
+
 export default async function AnalyticsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  const sub = await getUserSubscription()
+  if (!isSubscriptionActive(sub)) {
+    redirect('/dashboard/billing?notice=subscription_required')
+  }
 
   const { data: businesses } = await supabase.from('businesses').select('id').eq('owner_id', user.id).order('created_at', { ascending: false }).limit(1)
   const business = businesses?.[0]
@@ -52,10 +60,10 @@ export default async function AnalyticsPage() {
       {/* Summary stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
+          { label: 'Total QR Scans', value: totalScans },
           { label: 'Total Feedback', value: feedback.length },
           { label: 'Average Rating', value: avgRating },
           { label: 'Google Clicks', value: googleClicks },
-          { label: 'Feedback Copied', value: feedbackCopied },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl border border-zinc-200 p-5">
             <p className="text-xs text-zinc-500 font-medium mb-1">{s.label}</p>

@@ -13,10 +13,18 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
   )
 }
 
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  const sub = await getUserSubscription()
+  if (!isSubscriptionActive(sub)) {
+    redirect('/dashboard/billing?notice=subscription_required')
+  }
 
   const { data: profile } = await supabase.from('profiles').select('name').eq('id', user.id).maybeSingle()
   const { data: businesses } = await supabase.from('businesses').select('id, name').eq('owner_id', user.id).order('created_at', { ascending: false }).limit(1)
@@ -53,7 +61,7 @@ export default async function DashboardPage() {
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-zinc-900">{greeting}, {firstName} 👋</h1>
-        <p className="text-zinc-500 mt-1 text-sm">Here's what's happening with your customer feedback.</p>
+        <p className="text-zinc-500 mt-1 text-sm">Here&apos;s what&apos;s happening with your customer feedback.</p>
       </div>
 
       {/* Stats */}
