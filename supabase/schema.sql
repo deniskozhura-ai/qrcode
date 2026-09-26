@@ -130,24 +130,34 @@ CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.
 ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own businesses" ON businesses;
 DROP POLICY IF EXISTS "Public can read active business" ON businesses;
-CREATE POLICY "Users can manage own businesses" ON businesses FOR ALL USING (auth.uid() = owner_id);
+CREATE POLICY "Users can manage own businesses" ON businesses FOR ALL 
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
 
 -- QR Codes: Strict owner isolation. Public database client cannot query QR codes.
 ALTER TABLE qr_codes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own qr_codes" ON qr_codes;
 DROP POLICY IF EXISTS "Public can read qr_codes" ON qr_codes;
-CREATE POLICY "Users can manage own qr_codes" ON qr_codes FOR ALL USING (
-  EXISTS (SELECT 1 FROM businesses WHERE id = qr_codes.business_id AND owner_id = auth.uid())
-);
+CREATE POLICY "Users can manage own qr_codes" ON qr_codes FOR ALL 
+  USING (
+    EXISTS (SELECT 1 FROM businesses WHERE id = qr_codes.business_id AND owner_id = auth.uid())
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM businesses WHERE id = qr_codes.business_id AND owner_id = auth.uid())
+  );
 
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage own feedback" ON feedback;
 DROP POLICY IF EXISTS "Public can insert feedback" ON feedback;
 -- Only authenticated business owners can access feedback via RLS.
 -- Public submissions are handled exclusively through /api/feedback via service role.
-CREATE POLICY "Users can manage own feedback" ON feedback FOR ALL USING (
-  EXISTS (SELECT 1 FROM businesses WHERE id = feedback.business_id AND owner_id = auth.uid())
-);
+CREATE POLICY "Users can manage own feedback" ON feedback FOR ALL 
+  USING (
+    EXISTS (SELECT 1 FROM businesses WHERE id = feedback.business_id AND owner_id = auth.uid())
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM businesses WHERE id = feedback.business_id AND owner_id = auth.uid())
+  );
 
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can read own subscription" ON subscriptions;

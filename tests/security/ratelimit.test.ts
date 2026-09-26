@@ -95,4 +95,26 @@ describe('Rate Limiting & IP Security (Requirement 9, 10 & 29)', () => {
       expect(getClientIp(req)).toBe('198.51.100.5')
     })
   })
+
+  describe('Pre-configured Endpoints Rate Limiting', () => {
+    it('verifies checkoutRateLimiter limits checkout session creations to 5 per window', async () => {
+      const { checkoutRateLimiter } = await import('@/lib/rateLimit')
+      const userId = 'usr_checkout_test_123'
+
+      for (let i = 0; i < 5; i++) {
+        expect(checkoutRateLimiter.check(userId).success).toBe(true)
+      }
+      expect(checkoutRateLimiter.check(userId).success).toBe(false)
+    })
+
+    it('verifies authRateLimiter limits login/register attempts to 10 per window', async () => {
+      const { authRateLimiter } = await import('@/lib/rateLimit')
+      const ip = '198.51.100.88'
+
+      for (let i = 0; i < 10; i++) {
+        expect(authRateLimiter.check(ip).success).toBe(true)
+      }
+      expect(authRateLimiter.check(ip).success).toBe(false)
+    })
+  })
 })

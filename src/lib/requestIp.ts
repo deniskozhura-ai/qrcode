@@ -58,3 +58,43 @@ export function getClientIp(req: Request): string {
 
   return '127.0.0.1'
 }
+
+/**
+ * Extracts normalized, validated client IP within Next.js Server Actions.
+ */
+export async function getServerActionClientIp(): Promise<string> {
+  try {
+    const { headers } = await import('next/headers')
+    const headerList = await headers()
+
+    const vercelIp = headerList.get('x-vercel-forwarded-for')
+    if (vercelIp) {
+      const candidate = vercelIp.split(',')[0].trim()
+      if (isValidIp(candidate)) return candidate
+    }
+
+    const cfIp = headerList.get('cf-connecting-ip')
+    if (cfIp) {
+      const candidate = cfIp.trim()
+      if (isValidIp(candidate)) return candidate
+    }
+
+    const realIp = headerList.get('x-real-ip')
+    if (realIp) {
+      const candidate = realIp.trim()
+      if (isValidIp(candidate)) return candidate
+    }
+
+    const forwardedFor = headerList.get('x-forwarded-for')
+    if (forwardedFor) {
+      const ips = forwardedFor.split(',').map((s) => s.trim())
+      for (const ip of ips) {
+        if (isValidIp(ip)) return ip
+      }
+    }
+  } catch {
+    // In non-server-action or test environments where headers() is unavailable
+  }
+
+  return '127.0.0.1'
+}

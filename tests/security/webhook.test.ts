@@ -215,5 +215,51 @@ describe('Lemon Squeezy Webhook Security & Idempotency (Requirement 11, 12, 13 &
       expect(results.every((r) => r.body.received === true)).toBe(true)
       expect(db.subscriptionUpdates.get(duplicateEventId)).toBe(1)
     })
+
+    it('11. lifecycle events disambiguation: subscription_created followed by subscription_cancelled for SAME subscription ID are distinct events and both process successfully', async () => {
+      const db = new MockWebhookDatabase()
+      const subscriptionId = 'sub_ls_shared_resource_777'
+
+      // Derive event IDs distinguishing event lifecycle from raw resource ID alone
+      const createdEventId = `subscription_created_${subscriptionId}_active_2026-09-26`
+      const cancelledEventId = `subscription_cancelled_${subscriptionId}_cancelled_2026-09-27`
+
+      // 1. First event: subscription_created
+      const createdRes = await handleWebhookRequest(db, createdEventId)
+      expect(createdRes.httpStatus).toBe(200)
+      expect(createdRes.processed).toBe(true)
+      expect(createdRes.body.received).toBe(true)
+
+      // 2. Replay of subscription_created: rejected as duplicate
+      const replayRes = await handleWebhookRequest(db, createdEventId)
+      expect(replayRes.httpStatus).toBe(200)
+      expect(replayRes.processed).toBe(false) // Safely deduplicated!
+      expect(replayRes.body.received).toBe(true)
+
+      // 3. Second lifecycle event for SAME subscription: subscription_cancelled
+      // Must NOT be blocked by previous subscription_created event!
+      const cancelledRes = await handleWebhookRequest(db, cancelledEventId)
+      expect(cancelledRes.httpStatus).toBe(200)
+      expect(cancelledRes.processed).toBe(true) // Successfully processed cancellation!
+      expect(cancelledRes.body.received).toBe(true)
+
+      expect(db.subscriptionUpdates.get(createdEventId)).toBe(1)
+      expect(db.subscriptionUpdates.get(cancelledEventId)).toBe(1)
+    })
+
+    it('12. respects delivery ID / webhook_id header if provided by Lemon Squeezy', async () => {
+      const db = new MockWebhookDatabase()
+      const deliveryIdA = 'evt_delivery_uuid_aaa_111'
+      const deliveryIdB = 'evt_delivery_uuid_bbb_222'
+
+      const resA = await handleWebhookRequest(db, deliveryIdA)
+      expect(resA.processed).toBe(true)
+
+      const resADuplicate = await handleWebhookRequest(db, deliveryIdA)
+      expect(resADuplicate.processed).toBe(false)
+
+      const resB = await handleWebhookRequest(db, deliveryIdB)
+      expect(resB.processed).toBe(true)
+    })
   })
 })

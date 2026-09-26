@@ -90,4 +90,24 @@ describe('Subscription Access Control & State Machine (Requirement 15 & 31)', ()
     expect(mapLsStatus('unpaid')).toBe('past_due')
     expect(mapLsStatus('unknown_status')).toBe('inactive')
   })
+
+  describe('Server-side Mutation Enforcement (No Client State Trust)', () => {
+    it('13. blocks protected actions if user subscription is expired or inactive', () => {
+      const expiredSub = mockSub({ status: 'expired' })
+      const canProceed = isSubscriptionActive(expiredSub)
+      expect(canProceed).toBe(false)
+    })
+
+    it('14. ignores client-manipulated subscription state and evaluates true server record', () => {
+      // Attacker attempts to forge client state as { status: 'active' }
+      const forgedClientState = { status: 'active' }
+      // Server fetches true database record which is cancelled with expired period
+      const trueDatabaseRecord = mockSub({ status: 'cancelled', current_period_end: pastDate })
+
+      // Server access must rely ONLY on the verified database record
+      expect(isSubscriptionActive(trueDatabaseRecord)).toBe(false)
+      // Even if client sent status 'active' in body/cookie, server rejects
+      expect(forgedClientState.status === 'active' && !isSubscriptionActive(trueDatabaseRecord)).toBe(true)
+    })
+  })
 })

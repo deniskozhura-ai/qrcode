@@ -10,16 +10,27 @@ function getServiceClient() {
   )
 }
 
-function getSafeRedirectUrl(origin: string, nextParam: string | null): string {
-  if (
-    nextParam &&
-    nextParam.startsWith('/') &&
-    !nextParam.startsWith('//') &&
-    !nextParam.includes('\\')
-  ) {
-    return `${origin}${nextParam}`
+export function getSafeRedirectUrl(origin: string, nextParam: string | null): string {
+  if (!nextParam) return `${origin}/dashboard`
+  try {
+    // Must be a relative path strictly starting with a single '/' and no backslashes
+    if (
+      !nextParam.startsWith('/') ||
+      nextParam.startsWith('//') ||
+      nextParam.startsWith('/\\') ||
+      nextParam.includes('\\')
+    ) {
+      return `${origin}/dashboard`
+    }
+    const resolved = new URL(nextParam, origin)
+    // Origin must strictly match application origin
+    if (resolved.origin !== origin) {
+      return `${origin}/dashboard`
+    }
+    return resolved.toString()
+  } catch {
+    return `${origin}/dashboard`
   }
-  return `${origin}/dashboard`
 }
 
 export async function GET(request: Request) {

@@ -114,6 +114,7 @@ export const CreateQrInputSchema = z.object({
 export const LemonSqueezyWebhookPayloadSchema = z.object({
   meta: z.object({
     event_name: z.string(),
+    webhook_id: z.string().optional(),
     custom_data: z
       .object({
         user_id: z.string().uuid().optional(),
@@ -132,6 +133,7 @@ export const LemonSqueezyWebhookPayloadSchema = z.object({
       renews_at: z.string().nullable().optional(),
       ends_at: z.string().nullable().optional(),
       created_at: z.string().optional(),
+      updated_at: z.string().optional(),
       cancelled: z.boolean().optional(),
     }),
   }),

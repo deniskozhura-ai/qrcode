@@ -77,4 +77,40 @@ describe('Authentication & Protected Route Enforcement (Requirement 16 & 25)', (
     expect(res.sessionCreated).toBe(true)
     expect(res.redirect).toBe('/dashboard')
   })
+
+  describe('Open Redirect Prevention in getSafeRedirectUrl', () => {
+    it('Test 4: accepts legitimate relative paths on the same origin', async () => {
+      const { getSafeRedirectUrl } = await import('@/app/api/auth/callback/route')
+      const origin = 'https://reviewflow.app'
+
+      expect(getSafeRedirectUrl(origin, '/dashboard/settings')).toBe('https://reviewflow.app/dashboard/settings')
+      expect(getSafeRedirectUrl(origin, '/dashboard/qr')).toBe('https://reviewflow.app/dashboard/qr')
+      expect(getSafeRedirectUrl(origin, null)).toBe('https://reviewflow.app/dashboard')
+    })
+
+    it('Test 5: blocks protocol-relative URLs (//evil.com)', async () => {
+      const { getSafeRedirectUrl } = await import('@/app/api/auth/callback/route')
+      const origin = 'https://reviewflow.app'
+
+      expect(getSafeRedirectUrl(origin, '//evil.com')).toBe('https://reviewflow.app/dashboard')
+      expect(getSafeRedirectUrl(origin, '//attacker.org/phish')).toBe('https://reviewflow.app/dashboard')
+    })
+
+    it('Test 6: blocks backslash tricks (\\evil.com, /\\evil.com)', async () => {
+      const { getSafeRedirectUrl } = await import('@/app/api/auth/callback/route')
+      const origin = 'https://reviewflow.app'
+
+      expect(getSafeRedirectUrl(origin, '/\\evil.com')).toBe('https://reviewflow.app/dashboard')
+      expect(getSafeRedirectUrl(origin, '\\\\evil.com')).toBe('https://reviewflow.app/dashboard')
+      expect(getSafeRedirectUrl(origin, '/path\\evil.com')).toBe('https://reviewflow.app/dashboard')
+    })
+
+    it('Test 7: blocks external absolute URLs (https://evil.com)', async () => {
+      const { getSafeRedirectUrl } = await import('@/app/api/auth/callback/route')
+      const origin = 'https://reviewflow.app'
+
+      expect(getSafeRedirectUrl(origin, 'https://evil.com')).toBe('https://reviewflow.app/dashboard')
+      expect(getSafeRedirectUrl(origin, 'javascript:alert(1)')).toBe('https://reviewflow.app/dashboard')
+    })
+  })
 })

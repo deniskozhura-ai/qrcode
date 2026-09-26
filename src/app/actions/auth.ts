@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
+import { authRateLimiter } from '@/lib/rateLimit'
+import { getServerActionClientIp } from '@/lib/requestIp'
 
 function getServiceClient() {
   return createServiceClient(
@@ -29,6 +31,12 @@ const RegisterSchema = z.object({
 })
 
 export async function login(formData: FormData) {
+  const ip = await getServerActionClientIp()
+  const rateLimitResult = authRateLimiter.check(`login_${ip}`)
+  if (!rateLimitResult.success) {
+    redirect('/login?error=Too+many+attempts.+Please+try+again+in+a+minute.')
+  }
+
   const rawEmail = formData.get('email') as string
   const rawPassword = formData.get('password') as string
 
@@ -52,6 +60,12 @@ export async function login(formData: FormData) {
 }
 
 export async function register(formData: FormData) {
+  const ip = await getServerActionClientIp()
+  const rateLimitResult = authRateLimiter.check(`register_${ip}`)
+  if (!rateLimitResult.success) {
+    redirect('/register?error=Too+many+attempts.+Please+try+again+in+a+minute.')
+  }
+
   const rawName = formData.get('name') as string
   const rawEmail = formData.get('email') as string
   const rawPassword = formData.get('password') as string

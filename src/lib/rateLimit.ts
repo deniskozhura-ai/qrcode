@@ -122,3 +122,19 @@ export const analyticsRateLimiter = {
       maxRequests: 30,  // max 30 analytics pings per minute
     }),
 }
+
+export const checkoutRateLimiter = {
+  check: (key: string) =>
+    checkRateLimit(key, {
+      windowMs: 60_000, // 1 minute
+      maxRequests: 5,   // max 5 checkout creations per minute per user/IP
+    }),
+}
+
+export const authRateLimiter = {
+  check: (key: string) =>
+    checkRateLimit(key, {
+      windowMs: 60_000, // 1 minute
+      maxRequests: 10,  // max 10 auth attempts per minute per IP
+    }),
+}

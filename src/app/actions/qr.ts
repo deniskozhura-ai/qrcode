@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache'
 import crypto from 'crypto'
 import { z } from 'zod'
 import { CreateQrInputSchema } from '@/lib/validations'
+import { getUserSubscription } from '@/lib/billing/server'
+import { isSubscriptionActive } from '@/lib/billing/access'
 
 function generateQrSlug(): string {
   return crypto.randomBytes(4).toString('hex')
@@ -15,6 +17,11 @@ export async function createQr(formData: FormData) {
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) throw new Error('Not authenticated')
+
+  const sub = await getUserSubscription()
+  if (!isSubscriptionActive(sub)) {
+    throw new Error('Active subscription or trial required to create QR codes')
+  }
 
   const rawBusinessId = formData.get('business_id') as string
   const rawName = formData.get('name') as string

@@ -45,9 +45,19 @@ export async function POST(req: Request) {
 
   const payload = parsed.data
   const eventName = payload.meta.event_name
-  const eventId = payload.data.id
   const attrs = payload.data.attributes
   const userId = payload.meta.custom_data?.user_id
+
+  // Distinguish delivery/event ID from resource ID.
+  // Never use raw subscription ID alone as event ID, to prevent blocking distinct lifecycle events.
+  const deliveryId =
+    req.headers.get('x-delivery-id') ||
+    req.headers.get('x-event-id') ||
+    payload.meta.webhook_id
+
+  const eventId =
+    deliveryId ||
+    `${eventName}_${payload.data.id}_${attrs.status}_${attrs.updated_at ?? attrs.renews_at ?? attrs.ends_at ?? attrs.created_at ?? ''}`
 
   const db = getServiceClient()
 
