@@ -70,7 +70,7 @@ export default function BillingClient({ subscription: sub }: Props) {
           </div>
 
           <div className="flex items-baseline gap-1">
-            <span className="text-4xl font-bold tracking-tight text-zinc-900">€8</span>
+            <span className="text-4xl font-bold tracking-tight text-zinc-900">299 грн</span>
             <span className="text-zinc-400 font-medium">/month</span>
           </div>
         </div>
@@ -104,7 +104,7 @@ export default function BillingClient({ subscription: sub }: Props) {
               disabled={loading}
               className="w-full py-3 bg-zinc-900 text-white font-semibold rounded-xl hover:bg-zinc-700 disabled:opacity-60 transition-colors"
             >
-              {loading ? 'Redirecting…' : 'Start Free Trial — €8/month'}
+              {loading ? 'Redirecting…' : 'Start Free Trial — 299 грн/month'}
             </button>
           ) : sub.provider_subscription_id ? (
             <div className="space-y-3">
@@ -124,7 +124,7 @@ export default function BillingClient({ subscription: sub }: Props) {
               disabled={loading}
               className="w-full py-3 bg-zinc-900 text-white font-semibold rounded-xl hover:bg-zinc-700 disabled:opacity-60 transition-colors"
             >
-              {loading ? 'Redirecting…' : 'Subscribe — €8/month'}
+              {loading ? 'Redirecting…' : 'Subscribe — 299 грн/month'}
             </button>
           )}
         </div>

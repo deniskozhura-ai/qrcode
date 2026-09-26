@@ -21,7 +21,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-bold text-zinc-900 mb-3">2. Billing</h2>
-            <p>ReviewFlow charges €8/month after a 7-day free trial. Billing is managed by Lemon Squeezy. You may cancel at any time; access continues until the end of the paid period.</p>
+            <p>ReviewFlow charges 299 грн/month after a 7-day free trial. Billing is managed by Lemon Squeezy. You may cancel at any time; access continues until the end of the paid period.</p>
           </section>
 
           <section>

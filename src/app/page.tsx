@@ -35,7 +35,7 @@ export default function Home() {
         <div id="pricing" className="mt-20 w-full max-w-sm mx-auto bg-white rounded-3xl p-8 border border-zinc-200 shadow-sm">
           <h3 className="text-2xl font-semibold mb-2">Simple Pricing</h3>
           <div className="flex items-baseline justify-center gap-1 mb-6">
-            <span className="text-5xl font-bold tracking-tight">€8</span>
+            <span className="text-5xl font-bold tracking-tight">299 грн</span>
             <span className="text-zinc-500 font-medium">/month</span>
           </div>
           <ul className="text-left space-y-4 mb-8">

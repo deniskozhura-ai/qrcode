@@ -29,7 +29,7 @@ export default async function BillingSettingsPage() {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-lg font-bold text-zinc-900">ReviewFlow Pro</p>
-              <p className="text-sm text-zinc-500 mt-1">€8 / month</p>
+              <p className="text-sm text-zinc-500 mt-1">299 грн / month</p>
             </div>
             <div>
               {subscription?.status === 'active' ? (
