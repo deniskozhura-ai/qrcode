@@ -3,6 +3,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { verifyWebhookSignature } from '@/lib/billing/lemonsqueezy'
 import { mapLsStatus } from '@/lib/billing/access'
 import { LemonSqueezyWebhookPayloadSchema } from '@/lib/validations'
+import { logger } from '@/lib/logger'
 
 function getServiceClient() {
   return createServiceClient(
@@ -18,13 +19,13 @@ export async function POST(req: Request) {
   const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET
 
   if (!secret) {
-    console.error('[webhook] LEMONSQUEEZY_WEBHOOK_SECRET not configured')
+    logger.error('webhook.misconfigured', { reason: 'LEMONSQUEEZY_WEBHOOK_SECRET not set' })
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
   }
 
   // 1. Signature Verification with Constant-Time Comparison
   if (!signature || !verifyWebhookSignature(rawBody, signature, secret)) {
-    console.warn('[webhook] Invalid or missing signature')
+    logger.webhookInvalid('invalid_or_missing_signature')
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
@@ -75,10 +76,10 @@ export async function POST(req: Request) {
       idempotencyError.message?.toLowerCase().includes('duplicate') ||
       idempotencyError.message?.toLowerCase().includes('unique')
     ) {
-      console.log(`[webhook] Duplicate event ${eventId} safely ignored via atomic constraint`)
+      logger.info('webhook.duplicate_skipped', { eventId })
       return NextResponse.json({ received: true })
     }
-    console.error('[webhook] Error recording event idempotency:', idempotencyError)
+    logger.error('webhook.idempotency_failed', { eventId, error: idempotencyError.message })
     return NextResponse.json({ error: 'Failed to record event claim' }, { status: 500 })
   }
 
@@ -119,7 +120,7 @@ export async function POST(req: Request) {
         }
 
         if (!profile) {
-          console.error(`[webhook] User ${userId} does not exist in profiles`)
+          logger.error('webhook.user_not_found', { userId, eventId })
           throw new Error(`User ${userId} not found in profiles`)
         }
 
@@ -135,7 +136,7 @@ export async function POST(req: Request) {
           throw new Error(`Failed to upsert subscription: ${upsertError.message}`)
         }
 
-        console.log(`[webhook] Subscription successfully created for user ${userId}`)
+        logger.subscriptionEvent('subscription_created', userId ?? 'unknown', { eventId })
         break
       }
 
@@ -210,12 +211,12 @@ export async function POST(req: Request) {
       }
 
       default:
-        console.log(`[webhook] Unhandled or informative event: ${eventName}`)
+        logger.info('webhook.unhandled_event', { eventName, eventId })
     }
   } catch (error) {
     // CRITICAL: Subscription processing failed!
     // Release claimed event from webhook_events so the provider can retry.
-    console.error(`[webhook] Subscription processing failed for event ${eventId}:`, error)
+    logger.error('webhook.processing_failed', { eventId, error: String(error) })
     await db
       .from('webhook_events')
       .delete()

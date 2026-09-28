@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { checkoutRateLimiter } from '@/lib/rateLimit'
 import { getClientIp } from '@/lib/requestIp'
+import { logger } from '@/lib/logger'
 
 export async function POST(req: Request) {
   // 1. CSRF Origin Verification
@@ -28,8 +29,9 @@ export async function POST(req: Request) {
 
   // 3. Rate Limiting (5 checkout creations per minute per user/IP)
   const ip = getClientIp(req)
-  const rateLimitResult = checkoutRateLimiter.check(`${user.id}_${ip}`)
+  const rateLimitResult = await checkoutRateLimiter.check(`${user.id}_${ip}`)
   if (!rateLimitResult.success) {
+    logger.rateLimitHit('checkout', { userId: user.id, ip })
     return NextResponse.json(
       { error: 'Too many checkout requests. Please wait a moment.' },
       {

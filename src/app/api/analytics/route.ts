@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { AnalyticsEventSchema } from '@/lib/validations'
 import { analyticsRateLimiter } from '@/lib/rateLimit'
 import { getClientIp } from '@/lib/requestIp'
+import { logger } from '@/lib/logger'
 
 function getServiceClient() {
   return createClient(
@@ -15,8 +16,9 @@ function getServiceClient() {
 export async function POST(req: Request) {
   // 1. Rate Limiting
   const ip = getClientIp(req)
-  const rateLimitResult = analyticsRateLimiter.check(ip)
+  const rateLimitResult = await analyticsRateLimiter.check(ip)
   if (!rateLimitResult.success) {
+    logger.rateLimitHit('analytics', { ip })
     return NextResponse.json(
       { error: 'Too many requests. Please slow down.' },
       {
@@ -61,6 +63,7 @@ export async function POST(req: Request) {
 
   // Verify cross-business relationship if client provided business_id
   if (clientBusinessId && clientBusinessId !== qrCode.business_id) {
+    logger.bolaAttempt('analytics', { ip, providedBusinessId: clientBusinessId, actualBusinessId: qrCode.business_id })
     return NextResponse.json(
       { error: 'BOLA detected: Provided business_id does not match the QR code owner' },
       { status: 400 }
@@ -87,7 +90,7 @@ export async function POST(req: Request) {
   })
 
   if (insertError) {
-    console.error('[analytics API] insert error:', insertError)
+    logger.error('analytics.insert_failed', { error: insertError.message })
     return NextResponse.json({ error: 'Failed to record analytics event' }, { status: 500 })
   }
 

@@ -1,14 +1,14 @@
 /**
  * Rate Limiting Module
- * 
- * SERVERLESS ARCHITECTURE NOTE:
- * In a multi-instance serverless environment (e.g., Vercel Lambdas), in-memory stores
- * are local to each warm lambda instance.
- * For strict distributed rate limiting across thousands of concurrent lambdas,
- * swap MemoryRateLimitStore with Upstash / Redis using the RateLimitStore interface below.
- * 
- * For single-server and standard development/student workloads, the memory store
- * provides robust, leak-free rate limiting with automatic garbage collection of expired keys.
+ *
+ * DISTRIBUTED ARCHITECTURE:
+ * - When UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are set,
+ *   uses Upstash Redis for distributed rate limiting across all serverless instances.
+ * - Falls back to in-memory store for local dev or single-instance deployments.
+ *
+ * To enable distributed rate limiting on Vercel:
+ * 1. Create a Redis database at https://console.upstash.com/
+ * 2. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to env vars
  */
 
 export interface RateLimitResult {
@@ -33,6 +33,7 @@ export interface RateLimitStore {
   reset?(key: string): Promise<void> | void
 }
 
+// ─── In-Memory Store (single instance / local dev) ───────────────────────────
 export class MemoryRateLimitStore implements RateLimitStore {
   private store = new Map<string, RateLimitEntry>()
   private lastPurge = Date.now()
@@ -92,49 +93,136 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-// Global in-memory rate limiter store
-const memoryStore = new MemoryRateLimitStore()
-
+// ─── Upstash Redis Store (distributed / production) ──────────────────────────
 /**
- * Check rate limit for a given identifier (e.g. client IP or user ID)
+ * Upstash Redis rate limiter using atomic MULTI/EXEC pipeline.
+ * Uses INCR + EXPIRE to guarantee atomicity without Lua scripts.
+ * No external SDK required — uses Upstash REST API directly.
  */
+class UpstashRateLimitStore implements RateLimitStore {
+  private readonly url: string
+  private readonly token: string
+
+  constructor(url: string, token: string) {
+    this.url = url
+    this.token = token
+  }
+
+  async consume(key: string, options: RateLimitOptions): Promise<RateLimitResult> {
+    const windowSec = Math.ceil(options.windowMs / 1000)
+    const redisKey = `rl:${key}`
+
+    try {
+      // Use Upstash pipeline: INCR + EXPIRE atomically
+      const res = await fetch(`${this.url}/pipeline`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([
+          ['INCR', redisKey],
+          ['EXPIRE', redisKey, windowSec, 'NX'],
+          ['TTL', redisKey],
+        ]),
+      })
+
+      if (!res.ok) throw new Error(`Upstash error: ${res.status}`)
+
+      const data = await res.json()
+      const count: number = data?.[0]?.result ?? 1
+      const ttl: number = data?.[2]?.result ?? windowSec
+      const resetAt = Date.now() + ttl * 1000
+      const remaining = Math.max(0, options.maxRequests - count)
+
+      return {
+        success: count <= options.maxRequests,
+        limit: options.maxRequests,
+        remaining,
+        resetAt,
+      }
+    } catch (err) {
+      // On Redis failure, fail open (allow request) to avoid blocking legitimate traffic
+      console.error('[rateLimit] Upstash Redis error, failing open:', err)
+      return {
+        success: true,
+        limit: options.maxRequests,
+        remaining: options.maxRequests - 1,
+        resetAt: Date.now() + options.windowMs,
+      }
+    }
+  }
+
+  async reset(key: string): Promise<void> {
+    try {
+      await fetch(`${this.url}/del/rl:${key}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.token}` },
+      })
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// ─── Store Singleton ──────────────────────────────────────────────────────────
+function createStore(): RateLimitStore {
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN
+
+  if (upstashUrl && upstashToken) {
+    console.info('[rateLimit] Using Upstash Redis for distributed rate limiting')
+    return new UpstashRateLimitStore(upstashUrl, upstashToken)
+  }
+
+  // Memory store — acceptable for local dev and single-instance deployments
+  return new MemoryRateLimitStore()
+}
+
+// Lazily initialized to avoid issues during module loading in test environments
+let _store: RateLimitStore | null = null
+function getStore(): RateLimitStore {
+  if (!_store) _store = createStore()
+  return _store
+}
+
 export function checkRateLimit(
   key: string,
   options: RateLimitOptions,
-  store: RateLimitStore = memoryStore
-): RateLimitResult {
-  return store.consume(key, options) as RateLimitResult
+  store?: RateLimitStore
+): Promise<RateLimitResult> | RateLimitResult {
+  return (store ?? getStore()).consume(key, options)
 }
 
-// Pre-configured rate limiters
+// ─── Pre-configured limiters ──────────────────────────────────────────────────
 export const feedbackRateLimiter = {
   check: (key: string) =>
     checkRateLimit(key, {
-      windowMs: 60_000, // 1 minute
-      maxRequests: 5,   // max 5 feedback submissions per minute
+      windowMs: 60_000,
+      maxRequests: 5, // 5 feedback per minute per IP
     }),
 }
 
 export const analyticsRateLimiter = {
   check: (key: string) =>
     checkRateLimit(key, {
-      windowMs: 60_000, // 1 minute
-      maxRequests: 30,  // max 30 analytics pings per minute
+      windowMs: 60_000,
+      maxRequests: 30, // 30 analytics pings per minute per IP
     }),
 }
 
 export const checkoutRateLimiter = {
   check: (key: string) =>
     checkRateLimit(key, {
-      windowMs: 60_000, // 1 minute
-      maxRequests: 5,   // max 5 checkout creations per minute per user/IP
+      windowMs: 60_000,
+      maxRequests: 5, // 5 checkout creates per minute per user+IP
     }),
 }
 
 export const authRateLimiter = {
   check: (key: string) =>
     checkRateLimit(key, {
-      windowMs: 60_000, // 1 minute
-      maxRequests: 10,  // max 10 auth attempts per minute per IP
+      windowMs: 60_000,
+      maxRequests: 10, // 10 auth attempts per minute per IP
     }),
 }

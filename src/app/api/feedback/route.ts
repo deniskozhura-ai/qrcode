@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js'
 import { FeedbackInputSchema } from '@/lib/validations'
 import { feedbackRateLimiter } from '@/lib/rateLimit'
 import { getClientIp } from '@/lib/requestIp'
+import { logger } from '@/lib/logger'
+import { sendNegativeFeedbackAlert } from '@/lib/email'
 
 function getServiceClient() {
   return createClient(
@@ -15,8 +17,9 @@ function getServiceClient() {
 export async function POST(req: Request) {
   // 1. Rate Limiting (5 requests / min per IP)
   const ip = getClientIp(req)
-  const rateLimitResult = feedbackRateLimiter.check(ip)
+  const rateLimitResult = await feedbackRateLimiter.check(ip)
   if (!rateLimitResult.success) {
+    logger.rateLimitHit('feedback', { ip })
     return NextResponse.json(
       { error: 'Too many requests. Please wait a moment.' },
       {
@@ -61,16 +64,17 @@ export async function POST(req: Request) {
 
   // Cross-business ownership check: client must not forge business_id
   if (clientBusinessId && clientBusinessId !== qrCode.business_id) {
+    logger.bolaAttempt('feedback', { ip, providedBusinessId: clientBusinessId, actualBusinessId: qrCode.business_id })
     return NextResponse.json(
       { error: 'BOLA detected: Provided business_id does not match the QR code owner' },
       { status: 400 }
     )
   }
 
-  // Verify business is active
+  // Verify business is active — also fetch owner info for notifications
   const { data: business, error: bizError } = await db
     .from('businesses')
-    .select('id, status')
+    .select('id, name, status, owner_id')
     .eq('id', qrCode.business_id)
     .maybeSingle()
 
@@ -93,8 +97,33 @@ export async function POST(req: Request) {
     .single()
 
   if (insertError) {
-    console.error('[feedback API] Insert error:', insertError)
+    logger.error('feedback.insert_failed', { error: insertError.message })
     return NextResponse.json({ error: 'Failed to save feedback' }, { status: 500 })
+  }
+
+  logger.info('feedback.submitted', { rating, businessId: business.id, feedbackId: inserted?.id })
+
+  // 5. Fire-and-forget: send email notification for negative feedback (rating ≤ 3)
+  if (rating <= 3 && inserted?.id) {
+    // Check if owner has opted in to negative feedback notifications
+    const { data: profile } = await db
+      .from('profiles')
+      .select('email, name, notify_negative_feedback')
+      .eq('id', business.owner_id)
+      .maybeSingle()
+
+    if (profile?.notify_negative_feedback && profile.email) {
+      // Non-blocking — don't await, don't let email failure affect response
+      sendNegativeFeedbackAlert({
+        ownerEmail: profile.email,
+        ownerName: profile.name,
+        businessName: business.name,
+        rating,
+        category: category ?? null,
+        message: message ?? null,
+        feedbackId: inserted.id,
+      }).catch((err) => logger.error('email.notification_failed', { error: String(err) }))
+    }
   }
 
   return NextResponse.json({ success: true, id: inserted?.id })

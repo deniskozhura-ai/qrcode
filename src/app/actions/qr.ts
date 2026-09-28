@@ -7,6 +7,11 @@ import { z } from 'zod'
 import { CreateQrInputSchema } from '@/lib/validations'
 import { getUserSubscription } from '@/lib/billing/server'
 import { isSubscriptionActive } from '@/lib/billing/access'
+import { logger } from '@/lib/logger'
+
+// ─── Tier-based QR limits ────────────────────────────────────────────────────
+const QR_LIMIT_TRIAL = 3  // trialing users: max 3 QR codes per business
+const QR_LIMIT_PRO = Infinity // active/paid: unlimited
 
 function generateQrSlug(): string {
   return crypto.randomBytes(4).toString('hex')
@@ -18,11 +23,13 @@ export async function createQr(formData: FormData) {
 
   if (!user) throw new Error('Not authenticated')
 
+  // 1. Server-side subscription check — cannot be bypassed from client
   const sub = await getUserSubscription()
   if (!isSubscriptionActive(sub)) {
     throw new Error('Active subscription or trial required to create QR codes')
   }
 
+  // 2. Validate input
   const rawBusinessId = formData.get('business_id') as string
   const rawName = formData.get('name') as string
 
@@ -37,7 +44,7 @@ export async function createQr(formData: FormData) {
 
   const { name, business_id } = parsed.data
 
-  // Explicit ownership check: user must own the business
+  // 3. Explicit ownership check: user must own the business
   const { data: business, error: bizError } = await supabase
     .from('businesses')
     .select('id')
@@ -49,7 +56,30 @@ export async function createQr(formData: FormData) {
     throw new Error('Business not found or unauthorized')
   }
 
-  // Generate unique slug with retries
+  // 4. Enforce QR code limits per subscription tier
+  const isProUser = sub?.status === 'active' || sub?.status === 'past_due'
+  const qrLimit = isProUser ? QR_LIMIT_PRO : QR_LIMIT_TRIAL
+
+  if (qrLimit !== Infinity) {
+    const { count, error: countError } = await supabase
+      .from('qr_codes')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', business_id)
+
+    if (countError) {
+      logger.error('qr.count_failed', { businessId: business_id, error: countError.message })
+      throw new Error('Failed to validate QR code limits')
+    }
+
+    if ((count ?? 0) >= qrLimit) {
+      throw new Error(
+        `Your current plan allows up to ${qrLimit} QR code${qrLimit === 1 ? '' : 's'}. ` +
+        `Upgrade to Pro for unlimited QR codes.`
+      )
+    }
+  }
+
+  // 5. Generate unique slug with retries
   let slug = generateQrSlug()
   let attempts = 0
   while (attempts < 5) {
@@ -64,15 +94,17 @@ export async function createQr(formData: FormData) {
     attempts++
   }
 
+  // 6. Insert
   const { error } = await supabase
     .from('qr_codes')
     .insert([{ business_id, name, slug, active: true }])
 
   if (error) {
-    console.error('[createQr] Insert error:', error)
+    logger.error('qr.create_failed', { businessId: business_id, error: error.message })
     throw new Error('Failed to create QR code')
   }
 
+  logger.info('qr.created', { userId: user.id, businessId: business_id })
   revalidatePath('/dashboard/qr')
 }
 
@@ -89,7 +121,7 @@ export async function deleteQr(formData: FormData) {
     throw new Error('Invalid QR code ID')
   }
 
-  // Explicit ownership check before deletion: QR code must belong to a business owned by user
+  // Explicit ownership check before deletion
   const { data: qrItem, error: qrErr } = await supabase
     .from('qr_codes')
     .select('id, business_id, businesses!inner(owner_id)')
@@ -106,9 +138,10 @@ export async function deleteQr(formData: FormData) {
     .eq('id', id)
 
   if (error) {
-    console.error('[deleteQr] Delete error:', error)
+    logger.error('qr.delete_failed', { qrId: id, error: error.message })
     throw new Error('Failed to delete QR code')
   }
 
+  logger.info('qr.deleted', { userId: user.id, qrId: id })
   revalidatePath('/dashboard/qr')
 }

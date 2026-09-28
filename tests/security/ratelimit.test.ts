@@ -9,49 +9,49 @@ describe('Rate Limiting & IP Security (Requirement 9, 10 & 29)', () => {
     store = new MemoryRateLimitStore()
   })
 
-  it('allows 5 requests within the window and blocks the 6th request (429 simulation)', () => {
+  it('allows 5 requests within the window and blocks the 6th request (429 simulation)', async () => {
     const ip = '198.51.100.42'
     const options = { windowMs: 60_000, maxRequests: 5 }
 
     // First 5 requests should pass
     for (let i = 1; i <= 5; i++) {
-      const result = checkRateLimit(ip, options, store)
+      const result = await checkRateLimit(ip, options, store)
       expect(result.success).toBe(true)
       expect(result.remaining).toBe(5 - i)
     }
 
     // 6th request must be rejected
-    const blockedResult = checkRateLimit(ip, options, store)
+    const blockedResult = await checkRateLimit(ip, options, store)
     expect(blockedResult.success).toBe(false)
     expect(blockedResult.remaining).toBe(0)
   })
 
-  it('isolates rate limits between different IP addresses', () => {
+  it('isolates rate limits between different IP addresses', async () => {
     const options = { windowMs: 60_000, maxRequests: 2 }
 
-    checkRateLimit('198.51.100.1', options, store)
-    checkRateLimit('198.51.100.1', options, store)
-    const ip1Blocked = checkRateLimit('198.51.100.1', options, store)
+    await checkRateLimit('198.51.100.1', options, store)
+    await checkRateLimit('198.51.100.1', options, store)
+    const ip1Blocked = await checkRateLimit('198.51.100.1', options, store)
     expect(ip1Blocked.success).toBe(false)
 
     // IP 2 is fresh and must not be affected by IP 1
-    const ip2Result = checkRateLimit('198.51.100.2', options, store)
+    const ip2Result = await checkRateLimit('198.51.100.2', options, store)
     expect(ip2Result.success).toBe(true)
     expect(ip2Result.remaining).toBe(1)
   })
 
-  it('resets quota after windowMs expires', () => {
+  it('resets quota after windowMs expires', async () => {
     const options = { windowMs: 10, maxRequests: 1 } // 10ms window
 
-    const first = checkRateLimit('198.51.100.99', options, store)
+    const first = await checkRateLimit('198.51.100.99', options, store)
     expect(first.success).toBe(true)
 
-    const blocked = checkRateLimit('198.51.100.99', options, store)
+    const blocked = await checkRateLimit('198.51.100.99', options, store)
     expect(blocked.success).toBe(false)
 
     return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        const afterExpiry = checkRateLimit('198.51.100.99', options, store)
+      setTimeout(async () => {
+        const afterExpiry = await checkRateLimit('198.51.100.99', options, store)
         expect(afterExpiry.success).toBe(true)
         resolve()
       }, 25)
@@ -99,22 +99,28 @@ describe('Rate Limiting & IP Security (Requirement 9, 10 & 29)', () => {
   describe('Pre-configured Endpoints Rate Limiting', () => {
     it('verifies checkoutRateLimiter limits checkout session creations to 5 per window', async () => {
       const { checkoutRateLimiter } = await import('@/lib/rateLimit')
-      const userId = 'usr_checkout_test_123'
+
+      // Use unique key per test to avoid interference with shared memory store
+      const userId = `usr_checkout_test_${Date.now()}`
 
       for (let i = 0; i < 5; i++) {
-        expect(checkoutRateLimiter.check(userId).success).toBe(true)
+        const result = await checkoutRateLimiter.check(userId)
+        expect(result.success).toBe(true)
       }
-      expect(checkoutRateLimiter.check(userId).success).toBe(false)
+      const blocked = await checkoutRateLimiter.check(userId)
+      expect(blocked.success).toBe(false)
     })
 
     it('verifies authRateLimiter limits login/register attempts to 10 per window', async () => {
       const { authRateLimiter } = await import('@/lib/rateLimit')
-      const ip = '198.51.100.88'
+      const ip = `198.51.100.${Date.now() % 255}`
 
       for (let i = 0; i < 10; i++) {
-        expect(authRateLimiter.check(ip).success).toBe(true)
+        const result = await authRateLimiter.check(ip)
+        expect(result.success).toBe(true)
       }
-      expect(authRateLimiter.check(ip).success).toBe(false)
+      const blocked = await authRateLimiter.check(ip)
+      expect(blocked.success).toBe(false)
     })
   })
 })

@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { authRateLimiter } from '@/lib/rateLimit'
 import { getServerActionClientIp } from '@/lib/requestIp'
+import { logger } from '@/lib/logger'
 
 function getServiceClient() {
   return createServiceClient(
@@ -32,8 +33,9 @@ const RegisterSchema = z.object({
 
 export async function login(formData: FormData) {
   const ip = await getServerActionClientIp()
-  const rateLimitResult = authRateLimiter.check(`login_${ip}`)
+  const rateLimitResult = await authRateLimiter.check(`login_${ip}`)
   if (!rateLimitResult.success) {
+    logger.rateLimitHit('auth.login', { ip })
     redirect('/login?error=Too+many+attempts.+Please+try+again+in+a+minute.')
   }
 
@@ -53,6 +55,7 @@ export async function login(formData: FormData) {
   })
 
   if (error) {
+    logger.authFailure('invalid_credentials', { ip })
     redirect(`/login?error=${encodeURIComponent(error.message)}`)
   }
 
@@ -61,8 +64,9 @@ export async function login(formData: FormData) {
 
 export async function register(formData: FormData) {
   const ip = await getServerActionClientIp()
-  const rateLimitResult = authRateLimiter.check(`register_${ip}`)
+  const rateLimitResult = await authRateLimiter.check(`register_${ip}`)
   if (!rateLimitResult.success) {
+    logger.rateLimitHit('auth.register', { ip })
     redirect('/register?error=Too+many+attempts.+Please+try+again+in+a+minute.')
   }
 
